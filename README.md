@@ -51,7 +51,7 @@ Install **Docker Compose Manager** from Community Apps, add a new stack, paste i
 
 ### Optional: headless Chrome for difficult stores
 
-Some stores (Target, Best Buy, B&H, Etsy, Walmart…) block simple server requests or build their pages with JavaScript. A headless Chrome container lets Wishlist read those pages like a real browser does.
+Some stores (Best Buy, B&H, Etsy, Walmart…) block simple server requests or build their pages with JavaScript. A headless Chrome container lets Wishlist read those pages like a real browser does. For the most stubborn stores (e.g. Target), use the iPhone Shortcut with the *Run JavaScript on Web Page* step: your phone sends the page it already loaded. You can also fill in the price by hand; Wishlist tells you when something is missing.
 
 1. In the terminal, create a private network: `docker network create wishlist`
 2. Download the Chrome template:
