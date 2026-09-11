@@ -575,7 +575,8 @@ export async function scrapeProduct(rawUrl, { html } = {}) {
   data.categories = [...new Set(data.categories.map(clean).filter(Boolean))].slice(0, 20);
   const missing = ['price', 'image'].filter((k) => data[k] == null);
   data.status = missing.length === 0 ? 'ok' : 'partial';
-  data.error = errors[0] || (missing.length ? `Couldn't find the ${missing.join(' or ')}` : null);
+  // The last error is the most informative (e.g. the headless browser's, after a blocked plain fetch).
+  data.error = errors[errors.length - 1] || (missing.length ? `Couldn't find the ${missing.join(' or ')}` : null);
   delete data.blocked;
   delete data.isListing;
   delete data.isShopify;

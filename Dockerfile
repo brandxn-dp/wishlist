@@ -1,5 +1,5 @@
-# ---- build the web app ----
-FROM node:22-alpine AS build
+# ---- build the web app (platform-independent output, so build natively) ----
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
