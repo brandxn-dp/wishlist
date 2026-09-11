@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import fs from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { IMAGE_DIR, id } from './db.js';
 
@@ -34,9 +35,10 @@ async function assertPublic(url) {
   if (addrs.some((a) => isPrivateIp(a.address))) throw new Error('Links to private network addresses are blocked');
 }
 
-async function safeFetch(url, { accept, referer, timeout = 15_000 } = {}) {
+async function safeFetch(url, { accept, referer, timeout = 12_000 } = {}) {
   const jar = new Map();
   let current = url;
+  const kind = !accept ? 'document' : accept.startsWith('image') ? 'image' : 'empty';
   for (let hop = 0; hop < 8; hop++) {
     await assertPublic(current);
     const headers = {
@@ -44,11 +46,11 @@ async function safeFetch(url, { accept, referer, timeout = 15_000 } = {}) {
       Accept: accept || 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
       'Cache-Control': 'no-cache',
-      'Sec-Fetch-Dest': accept ? 'image' : 'document',
-      'Sec-Fetch-Mode': accept ? 'no-cors' : 'navigate',
-      'Sec-Fetch-Site': referer ? 'cross-site' : 'none',
-      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': kind,
+      'Sec-Fetch-Mode': { document: 'navigate', image: 'no-cors', empty: 'cors' }[kind],
+      'Sec-Fetch-Site': referer || kind === 'empty' ? 'same-origin' : 'none',
     };
+    if (kind === 'document') headers['Upgrade-Insecure-Requests'] = '1';
     if (referer) headers.Referer = referer;
     if (jar.size) headers.Cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
     const res = await fetch(current, { headers, redirect: 'manual', signal: AbortSignal.timeout(timeout) });
@@ -94,7 +96,86 @@ async function fetchHtml(url) {
   return { html, url: finalUrl, status: res.status };
 }
 
-/* ───────────────────────── headless browser (optional) ───────────────────────── */
+/* ───────────────────────── headless browser ─────────────────────────
+ * The Docker image ships Chromium, launched on demand and closed when idle.
+ * BROWSER_URL / BROWSER_WS_URL point at an external Chrome instead; BROWSER=off disables it. */
+
+const CHROME_PATHS = [process.env.CHROMIUM_PATH, '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].filter(Boolean);
+let chromePath;
+function localChromePath() {
+  if (chromePath === undefined) {
+    chromePath = CHROME_PATHS.find((p) => {
+      try {
+        return statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    }) || null;
+  }
+  return chromePath;
+}
+
+export function browserMode() {
+  if (process.env.BROWSER === 'off') return 'off';
+  if (process.env.BROWSER_URL || process.env.BROWSER_WS_URL) return 'remote';
+  return localChromePath() ? 'built-in' : 'off';
+}
+
+export const browserConfigured = () => browserMode() !== 'off';
+
+let launched = null; // Promise<Browser> for the built-in Chromium
+let idleTimer = null;
+let openPages = 0;
+
+async function localBrowser() {
+  clearTimeout(idleTimer);
+  if (!launched) {
+    const { default: puppeteer } = await import('puppeteer-core');
+    launched = puppeteer
+      .launch({
+        executablePath: localChromePath(),
+        headless: true,
+        ignoreDefaultArgs: ['--enable-automation'],
+        args: [
+          '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--mute-audio', '--lang=en-US',
+          '--disable-blink-features=AutomationControlled', '--window-size=1280,900',
+        ],
+      })
+      .then((b) => {
+        b.on('disconnected', () => (launched = null));
+        return b;
+      })
+      .catch((err) => {
+        launched = null;
+        throw err;
+      });
+  }
+  return launched;
+}
+
+// Free Chromium's memory once nothing has needed it for a while.
+function closeWhenIdle() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(async () => {
+    if (openPages || !launched) return;
+    const b = await launched.catch(() => null);
+    launched = null;
+    await b?.close().catch(() => {});
+  }, 90_000);
+}
+
+let rendering = 0;
+const renderQueue = [];
+async function withRenderSlot(fn) {
+  if (rendering >= 2) await new Promise((r) => renderQueue.push(r));
+  rendering++;
+  try {
+    return await fn();
+  } finally {
+    rendering--;
+    renderQueue.shift()?.();
+  }
+}
 
 async function browserEndpoint() {
   if (process.env.BROWSER_WS_URL) return process.env.BROWSER_WS_URL;
@@ -110,27 +191,165 @@ async function browserEndpoint() {
   return ws.href;
 }
 
-export const browserConfigured = () => Boolean(process.env.BROWSER_URL || process.env.BROWSER_WS_URL);
+const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|\[?::1\]?$|\[?f[cd])/i;
+
+// A fresh tab that presents as regular desktop Chrome (not "HeadlessChrome"), matching the real engine version.
+async function stealthPage(browser) {
+  const page = await browser.newPage();
+  const major = /\/(\d+)/.exec(await browser.version())?.[1] || '139';
+  const cdp = await page.createCDPSession();
+  await cdp.send('Network.setUserAgentOverride', {
+    userAgent: `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`,
+    acceptLanguage: 'en-US,en;q=0.9',
+    platform: 'Linux x86_64',
+    userAgentMetadata: {
+      brands: [{ brand: 'Google Chrome', version: major }, { brand: 'Chromium', version: major }, { brand: 'Not.A/Brand', version: '99' }],
+      fullVersion: `${major}.0.0.0`,
+      platform: 'Linux',
+      platformVersion: '',
+      architecture: 'x86',
+      model: '',
+      mobile: false,
+    },
+  });
+  await page.evaluateOnNewDocument(() => Object.defineProperty(navigator, 'webdriver', { get: () => undefined }));
+  await page.setViewport({ width: 1280, height: 900 });
+  return page;
+}
+
+// Run fn(page) in the built-in (or external) browser, at most two tabs at a time.
+async function withBrowserPage(fn) {
+  const mode = browserMode();
+  return withRenderSlot(async () => {
+    const { default: puppeteer } = await import('puppeteer-core');
+    const browser = mode === 'remote' ? await puppeteer.connect({ browserWSEndpoint: await browserEndpoint() }) : await localBrowser();
+    openPages++;
+    let page;
+    try {
+      page = await stealthPage(browser);
+      return await fn(page);
+    } finally {
+      openPages--;
+      await page?.close().catch(() => {});
+      if (mode === 'remote') await browser.disconnect().catch(() => {});
+      else closeWhenIdle();
+    }
+  });
+}
+
+// Some image CDNs refuse plain requests; load the image in the browser instead.
+async function fetchImageViaBrowser(src, referer) {
+  if (browserMode() === 'off') return null;
+  await assertPublic(src);
+  return withBrowserPage(async (page) => {
+    const res = await page.goto(src, { referer, waitUntil: 'load', timeout: 20_000 });
+    if (!res?.ok()) return null;
+    return { type: (res.headers()['content-type'] || '').split(';')[0].trim().toLowerCase(), buf: await res.buffer() };
+  });
+}
 
 async function renderWithBrowser(url) {
-  const endpoint = await browserEndpoint();
-  if (!endpoint) return null;
+  if (browserMode() === 'off') return null;
   await assertPublic(url);
-  const { default: puppeteer } = await import('puppeteer-core');
-  const browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
-  let page;
+  return withBrowserPage(async (page) => {
+      // Skip heavy assets, and never let a page pull from the local network.
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+        let host = '';
+        try {
+          host = new URL(req.url()).hostname;
+        } catch {
+          /* data: URLs etc. */
+        }
+        if (['image', 'media', 'font'].includes(req.resourceType()) || (process.env.ALLOW_PRIVATE_URLS !== 'true' && PRIVATE_HOST.test(host))) {
+          req.abort().catch(() => {});
+        } else req.continue().catch(() => {});
+      });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      await page.waitForNetworkIdle({ idleTime: 800, timeout: 8000 }).catch(() => {});
+      return { html: await page.content(), url: page.url() };
+  });
+}
+
+/* ───────────────────────── store APIs (for stores that block page scraping) ───────────────────────── */
+
+function bestBuyRef(url) {
+  const u = new URL(url);
+  if (!/(^|\.)bestbuy\.com$/i.test(u.hostname)) return null;
+  const sku =
+    u.searchParams.get('skuId') ||
+    /\/sku\/(\d{6,9})/i.exec(u.pathname)?.[1] ||
+    /\/(\d{6,9})\.p\b/.exec(u.pathname)?.[1];
+  if (sku) return { sku };
+  // New-style links: /product/<name>/<productId>
+  const m = /\/product\/([^/]+)\/([A-Z0-9]{6,})/i.exec(u.pathname);
+  return m ? { slug: m[1], productId: m[2] } : null;
+}
+
+async function bestBuyBlocks(skus) {
+  const { res } = await safeFetch(`https://www.bestbuy.com/api/3.0/priceBlocks?skus=${skus.join(',')}`, { accept: 'application/json' });
+  if (!res.ok) return [];
+  const data = JSON.parse((await readBody(res, MAX_HTML)).toString('utf8'));
+  return Array.isArray(data) ? data.map((b) => b?.sku).filter(Boolean) : [];
+}
+
+// New-style links carry no SKU. Search for the product name, then keep the result whose
+// canonical URL contains the same product id — an exact match, not a guess.
+async function bestBuyFromProductId(slug, productId) {
+  let words = slug;
   try {
-    page = await browser.newPage();
-    await page.setUserAgent(UA);
-    await page.setViewport({ width: 1280, height: 900 });
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.waitForNetworkIdle({ idleTime: 800, timeout: 8000 }).catch(() => {});
-    return { html: await page.content(), url: page.url() };
-  } finally {
-    await page?.close().catch(() => {});
-    await browser.disconnect();
+    words = decodeURIComponent(slug);
+  } catch {
+    /* keep raw */
   }
+  const query = words.replace(/-/g, ' ').split(/\s+/).slice(0, 12).join(' ');
+  const { res } = await safeFetch(`https://www.bestbuy.com/site/searchpage.jsp?st=${encodeURIComponent(query)}`);
+  if (!res.ok) return null;
+  const html = (await readBody(res, MAX_HTML)).toString('utf8');
+  const candidates = [...new Set([...html.matchAll(/(?:"skuId"|"sku"|data-sku-id=)\s*:?\s*"?(\d{7,8})\b/g)].map((m) => m[1]))].slice(0, 60);
+  const id = productId.toLowerCase();
+  const matches = [];
+  for (let i = 0; i < candidates.length; i += 20) {
+    matches.push(...(await bestBuyBlocks(candidates.slice(i, i + 20))).filter((s) => s.url?.toLowerCase().split(/[/?#]/).includes(id)));
+    if (matches.some((s) => String(s.skuId).length === 7)) break;
+  }
+  // One product id can cover Best Buy's own listing (7-digit SKU) and marketplace sellers (longer SKUs).
+  return matches.sort((a, b) => String(a.skuId).length - String(b.skuId).length)[0] || null;
+}
+
+// Best Buy blocks automated visits to product pages (even real headless Chrome), but its
+// price API answers normally — and product photos live at a predictable CDN address.
+async function fromBestBuy(url) {
+  const ref = bestBuyRef(url);
+  if (!ref) return null;
+  const s = ref.sku ? (await bestBuyBlocks([ref.sku]))[0] : await bestBuyFromProductId(ref.slug, ref.productId);
+  if (!s?.names?.short) return null;
+  const sku = String(s.skuId || ref.sku);
+  const brand = clean(s.brand?.brand);
+  let title = clean(s.names.short);
+  if (brand && title.toLowerCase().startsWith(`${brand.toLowerCase()} - `)) title = title.slice(brand.length + 3);
+  const p = s.price || {};
+  return {
+    // Remember the SKU in the link so later price checks skip the search.
+    url: ref.sku ? null : `${url}${url.includes('?') ? '&' : '?'}skuId=${sku}`,
+    title,
+    brand,
+    price: parsePrice(p.currentPrice ?? p.customerPrice ?? p.regularPrice),
+    currency: 'USD',
+    image: `https://pisces.bbystatic.com/image2/BestBuy_US/images/products/${sku.slice(0, 4)}/${sku}_sd.jpg`,
+    siteName: 'Best Buy',
+    categories: [],
+  };
+}
+
+const STORE_APIS = [fromBestBuy];
+
+async function fromStoreApi(url) {
+  for (const adapter of STORE_APIS) {
+    const data = await adapter(url).catch(() => null);
+    if (data) return data;
+  }
+  return null;
 }
 
 /* ───────────────────────── value parsing ───────────────────────── */
@@ -356,20 +575,37 @@ function fromMeta($, pageUrl, domain) {
   };
 }
 
-// Last resort: look for the first currency-looking text inside an element whose class mentions "price".
+// Last resort: look for currency-looking text in an element whose class mentions "price".
+// A wrong price is worse than none, so skip page chrome, carousels, add-ons and monthly prices.
+const PRICE_NOISE = [
+  'header', 'nav', 'footer', 'aside', '[class*="recommend" i]', '[class*="carousel" i]', '[class*="related" i]',
+  '[class*="similar" i]', '[class*="bundle" i]', '[class*="protection" i]', '[class*="warranty" i]', '[class*="plan-" i]',
+  '[class*="shipping" i]', '[class*="installment" i]', '[class*="monthly" i]', '[class*="upsell" i]', '[class*="accessor" i]',
+  '[class*="sponsor" i]', '[class*="cart" i]',
+].join(', ');
+const PREFERRED_PRICE = [
+  '[data-testid*="product-price" i]', '[data-test*="product-price" i]', '[class*="product-price" i]', '[id*="product-price" i]',
+  '[class*="current-price" i]', '[class*="price-current" i]', '[class*="sale-price" i]', '[class*="final-price" i]',
+].join(', ');
+
 function fromPriceClasses($, domain) {
   let found = null;
-  $('[class*="price" i], [id*="price" i], [data-price]').each((i, el) => {
-    if (i > 40 || found) return false;
-    const $el = $(el);
-    const dp = $el.attr('data-price');
-    const text = clean($el.children().length > 6 ? '' : $el.text()) || '';
-    const candidate = dp && /\d/.test(dp) ? dp : text.length < 40 ? text : '';
-    if (candidate && /[$€£¥₹]|\b(USD|EUR|GBP|CAD|AUD)\b/.test(candidate + ($el.text() || '').slice(0, 40))) {
-      const price = parsePrice(candidate, { text: true });
-      if (price) found = { price, currency: detectCurrency(candidate || text, domain) };
-    }
-  });
+  for (const selector of [PREFERRED_PRICE, '[class*="price" i], [id*="price" i], [data-price]']) {
+    $(selector).each((i, el) => {
+      if (i > 60 || found) return false;
+      const $el = $(el);
+      if ($el.closest(PRICE_NOISE).length) return;
+      const dp = $el.attr('data-price');
+      const text = clean($el.children().length > 6 ? '' : $el.text()) || '';
+      const candidate = dp && /\d/.test(dp) ? dp : text.length < 40 ? text : '';
+      if (!candidate || /\/\s*mo\b|per month|a month|\/ea\b|per item|shipping|\bsave\b|\boff\b|%/i.test(candidate)) return;
+      if (/[$€£¥₹]|\b(USD|EUR|GBP|CAD|AUD)\b/.test(candidate + ($el.text() || '').slice(0, 40))) {
+        const price = parsePrice(candidate, { text: true });
+        if (price) found = { price, currency: detectCurrency(candidate || text, domain) };
+      }
+    });
+    if (found) break;
+  }
   return found || {};
 }
 
@@ -517,7 +753,12 @@ export async function scrapeProduct(rawUrl, { html } = {}) {
   const errors = [];
 
   let page = null;
-  if (html) page = { html, url, status: 200 };
+  const fromApi = html ? null : await fromStoreApi(url);
+  if (fromApi) {
+    merge(data, fromApi);
+    if (fromApi.url) data.url = fromApi.url;
+  }
+  else if (html) page = { html, url, status: 200 };
   else {
     try {
       page = await fetchHtml(url);
@@ -587,6 +828,14 @@ export async function scrapeProduct(rawUrl, { html } = {}) {
 
 const EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
 
+async function plainImage(src, referer) {
+  const { res } = await safeFetch(src, { accept: 'image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5', referer });
+  if (!res.ok) return null;
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (type && !type.startsWith('image/') && type !== 'application/octet-stream') return null;
+  return { type, buf: await readBody(res, MAX_IMAGE) };
+}
+
 /** Download an image into the data dir. Returns the stored filename or null. */
 export async function downloadImage(src, referer) {
   if (!src) return null;
@@ -597,15 +846,14 @@ export async function downloadImage(src, referer) {
       if (!m) return null;
       [type, buf] = [m[1], Buffer.from(m[2], 'base64')];
     } else {
-      const { res } = await safeFetch(src, { accept: 'image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5', referer });
-      if (!res.ok) return null;
-      type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      const got = (await plainImage(src, referer).catch(() => null)) || (await fetchImageViaBrowser(src, referer).catch(() => null));
+      if (!got) return null;
+      ({ type, buf } = got);
       if (!EXT[type]) {
         const ext = /\.(jpe?g|png|webp|gif|avif)(\?|$)/i.exec(src)?.[1]?.toLowerCase();
         if (!ext) return null;
         type = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
       }
-      buf = await readBody(res, MAX_IMAGE);
     }
     if (!EXT[type] || buf.length < 100 || buf.length >= MAX_IMAGE) return null;
     const name = `${id()}.${EXT[type]}`;

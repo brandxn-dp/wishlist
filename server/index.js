@@ -10,7 +10,7 @@ import {
 } from './auth.js';
 import { subscribe, emit } from './events.js';
 import { getRates } from './rates.js';
-import { scrapeProduct, downloadImage, deleteImage, cleanUrl, browserConfigured } from './scraper.js';
+import { scrapeProduct, downloadImage, deleteImage, cleanUrl, browserMode } from './scraper.js';
 import { autoTags, BUILT_IN_TAGS } from './tagger.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -281,7 +281,7 @@ api.get('/bootstrap', wrap(async (req, res) => {
     rates: await getRates(),
     server: {
       version: VERSION,
-      browser: browserConfigured(),
+      browser: browserMode(),
       priceCheckHours: PRICE_CHECK_HOURS,
       signupAllowed: signupAllowed(),
       builtInTags: BUILT_IN_TAGS,
@@ -700,7 +700,7 @@ async function priceCheckTick() {
 
 app.listen(PORT, () => {
   console.log(`Wishlist ${VERSION} listening on http://0.0.0.0:${PORT}`);
-  if (browserConfigured()) console.log('Headless browser fallback enabled');
+  console.log(`Headless browser: ${browserMode()}`);
   getRates().catch(() => {});
   setTimeout(priceCheckTick, 60_000);
   setInterval(priceCheckTick, 10 * 60_000);

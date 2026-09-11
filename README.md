@@ -26,7 +26,7 @@ docker run -d --name wishlist -p 8080:8080 -v ./data:/data ghcr.io/brandxn-dp/wi
 
 Open `http://your-server:8080`. The first account you create becomes the admin.
 
-Or with Docker Compose (includes the optional headless Chrome — see below):
+Or with Docker Compose:
 
 ```bash
 curl -O https://raw.githubusercontent.com/brandxn-dp/wishlist/main/docker-compose.yml
@@ -49,20 +49,13 @@ docker compose up -d
 
 Install **Docker Compose Manager** from Community Apps, add a new stack, paste in [`docker-compose.yml`](docker-compose.yml), change `./data` to `/mnt/user/appdata/wishlist`, then click **Compose Up**.
 
-### Optional: headless Chrome for difficult stores
+### How tricky stores are handled
 
-Some stores (Best Buy, B&H, Etsy, Walmart…) block simple server requests or build their pages with JavaScript. A headless Chrome container lets Wishlist read those pages like a real browser does. For the most stubborn stores (e.g. Target), use the iPhone Shortcut with the *Run JavaScript on Web Page* step: your phone sends the page it already loaded. You can also fill in the price by hand; Wishlist tells you when something is missing.
+It's all one container:
 
-1. In the terminal, create a private network: `docker network create wishlist`
-2. Download the Chrome template:
-   ```bash
-   wget -O /boot/config/plugins/dockerMan/templates-user/my-wishlist-chrome.xml https://raw.githubusercontent.com/brandxn-dp/wishlist/main/unraid/wishlist-chrome.xml
-   ```
-3. **Add Container** → template **wishlist-chrome** → **Apply**. It's already set to use the `wishlist` network. Don't add a port for it.
-4. Edit the **wishlist** container: set **Network Type** to **Custom: wishlist**. Set **Headless browser URL** to `http://wishlist-chrome:9222`. Click **Apply**.
-5. **Settings → About → Headless Browser** in the app should now say **Connected**.
-
-> If you don't see "Custom: wishlist" in the Network Type list, enable **Settings → Docker → Preserve user defined networks** (Docker must be stopped to change it).
+- **Built-in Chromium.** Some stores (B&H, Etsy, Walmart…) block simple requests or build their pages with JavaScript. Wishlist then opens the page in a headless Chromium inside the container. Chromium only starts when a link needs it and shuts down after 90 seconds idle, so it costs no memory the rest of the time. Set `BROWSER=off` to disable it.
+- **Best Buy** blocks automated visits to product pages outright, even from real browsers. Wishlist reads Best Buy's own price API instead, which is faster and more reliable.
+- **Anything else stubborn** (e.g. Target): use the iPhone Shortcut with the *Run JavaScript on Web Page* step. Your phone sends the page it already loaded. You can also fill in the price by hand; Wishlist tells you when something is missing.
 
 ### Updating
 
@@ -82,8 +75,9 @@ Some stores (Best Buy, B&H, Etsy, Walmart…) block simple server requests or bu
 | `PORT` | `8080` | HTTP port |
 | `DATA_DIR` | `/data` | Where the SQLite database and images are stored |
 | `PRICE_CHECK_HOURS` | `24` | Background price-check interval. `0` disables |
-| `BROWSER_URL` | – | Chrome DevTools HTTP endpoint, e.g. `http://wishlist-chrome:9222` |
-| `BROWSER_WS_URL` | – | Alternative: a direct WebSocket endpoint (e.g. browserless) |
+| `BROWSER` | `on` | `off` disables the built-in Chromium |
+| `BROWSER_URL` | – | Use an external Chrome instead (DevTools HTTP endpoint, e.g. `http://chrome:9222`) |
+| `BROWSER_WS_URL` | – | Or a direct WebSocket endpoint (e.g. browserless) |
 | `ALLOW_SIGNUP` | `false` | Allow self sign-up after the first (admin) account. Can also be toggled in Settings |
 | `DISABLE_SIGNUP` | `false` | Force sign-ups off regardless of the Settings toggle |
 | `ALLOW_PRIVATE_URLS` | `false` | Allow fetching links on private/LAN addresses |

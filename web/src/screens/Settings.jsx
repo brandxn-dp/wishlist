@@ -140,7 +140,7 @@ export default function SettingsScreen() {
 
         <Group header="About">
           <Row icon="server" iconBg={c('graphite')} title="Version" detail={server.version} />
-          <Row icon="safari" iconBg={c('cyan')} title="Headless Browser" detail={server.browser ? 'Connected' : 'Off'} />
+          <Row icon="safari" iconBg={c('cyan')} title="Headless Browser" detail={{ 'built-in': 'Built-in', remote: 'External', off: 'Off' }[server.browser] || 'Off'} />
           <Row icon="github" iconBg="#24292f" title="Source Code" chevron onClick={() => window.open(REPO, '_blank', 'noopener')} />
         </Group>
 
