@@ -1,0 +1,29 @@
+services:
+  wishlist:
+    image: ghcr.io/brandxn-dp/wishlist:latest
+    container_name: wishlist
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      # Optional headless Chrome for sites that block simple scrapers or render prices with JavaScript.
+      - BROWSER_URL=http://wishlist-chrome:9222
+      # How often (hours) to re-check prices in the background. 0 disables.
+      - PRICE_CHECK_HOURS=24
+    depends_on:
+      - wishlist-chrome
+
+  wishlist-chrome:
+    image: zenika/alpine-chrome:124
+    shm_size: 1gb
+    container_name: wishlist-chrome
+    restart: unless-stopped
+    command:
+      - --no-sandbox
+      - --disable-gpu
+      - --disable-dev-shm-usage
+      - --remote-debugging-address=0.0.0.0
+      - --remote-debugging-port=9222
+      - --hide-scrollbars

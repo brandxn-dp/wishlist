@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>wishlist-chrome</Name>
+  <Repository>zenika/alpine-chrome:124</Repository>
+  <Registry>https://hub.docker.com/r/zenika/alpine-chrome</Registry>
+  <Network>wishlist</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/brandxn-dp/wishlist</Support>
+  <Project>https://github.com/Zenika/alpine-chrome</Project>
+  <Overview>Optional headless Chrome used by Wishlist to read product pages from stores that block simple scrapers or build their pages with JavaScript. Put it on the same custom Docker network as Wishlist and do not publish port 9222.</Overview>
+  <Category>Tools:</Category>
+  <TemplateURL>https://raw.githubusercontent.com/brandxn-dp/wishlist/main/unraid/wishlist-chrome.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/brandxn-dp/wishlist/main/web/public/icons/icon-512.png</Icon>
+  <ExtraParams>--shm-size=1g</ExtraParams>
+  <PostArgs>--no-sandbox --disable-gpu --disable-dev-shm-usage --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --hide-scrollbars</PostArgs>
+</Container>
