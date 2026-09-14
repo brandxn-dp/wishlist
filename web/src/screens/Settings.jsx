@@ -357,7 +357,17 @@ function IntegrationsScreen() {
   const [tokens, setTokens] = useState(null);
   const bookmark = useRef(null);
   const origin = location.origin;
-  const bookmarklet = `javascript:(function(){window.open('${origin}/add?url='+encodeURIComponent(location.href),'_blank')})()`;
+  // Opens the app, then waits to be asked for the page it is already showing. Sending the HTML
+  // is what makes stores that block servers work, and it needs no token and no CORS: the app
+  // posts the item from its own origin, with the session cookie it already has. The nonce ties
+  // the answer to the tab this click opened.
+  const bookmarklet =
+    `javascript:(function(){var o=${JSON.stringify(origin)},n=Math.random().toString(36).slice(2),` +
+    `w=window.open(o+'/add?capture='+n+'&url='+encodeURIComponent(location.href),'_blank');` +
+    `function h(e){var d=e.data;if(e.source!==w||e.origin!==o||!d||d.type!=='wishlist:capture'||d.nonce!==n)return;` +
+    `removeEventListener('message',h);clearTimeout(t);` +
+    `w.postMessage({type:'wishlist:page',nonce:n,url:location.href,html:document.documentElement.outerHTML},o)}` +
+    `addEventListener('message',h);var t=setTimeout(function(){removeEventListener('message',h)},3e4)})()`;
 
   const load = () => api('/tokens').then((r) => setTokens(r.tokens)).catch(fail);
   useEffect(() => {
@@ -435,7 +445,7 @@ function IntegrationsScreen() {
           <div className="code" onClick={() => copy(`${origin}/api/items`, 'Address copied')}>{origin}/api/items</div>
         </Group>
 
-        <Group header="Computer Bookmarklet" footer="Drag the button to your bookmarks bar. Click it on any product page to add it.">
+        <Group header="Computer Bookmarklet" footer="Drag the button to your bookmarks bar. Click it on any product page to add it. It hands over the page your browser already loaded, so it works on stores that block servers.">
           <div style={{ padding: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <a ref={bookmark} className="btn small" onClick={(e) => e.preventDefault()} title="Drag me to your bookmarks bar">
               <Icon name="plus" size={18} /> Add to Wishlist

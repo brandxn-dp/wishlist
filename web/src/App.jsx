@@ -76,12 +76,37 @@ function Shell() {
 
   // Links shared into the app (Android share sheet / bookmarklet / iOS Shortcut "open URL").
   useEffect(() => {
-    if (location.pathname === '/share' || location.pathname === '/add') {
-      const p = new URLSearchParams(location.search);
-      const url = extractUrl([p.get('url'), p.get('text'), p.get('title')].filter(Boolean).join(' '));
-      history.replaceState(null, '', '/');
+    if (location.pathname !== '/share' && location.pathname !== '/add') return;
+    const p = new URLSearchParams(location.search);
+    const url = extractUrl([p.get('url'), p.get('text'), p.get('title')].filter(Boolean).join(' '));
+    // The bookmarklet opens us with ?capture=<nonce> and stays around to hand over the page it
+    // already has. That page came from the user's own logged-in browser, so it works on stores
+    // that answer a server with a block — the same capability the iOS Shortcut has.
+    const nonce = p.get('capture');
+    history.replaceState(null, '', '/');
+    if (!nonce || !window.opener) {
       openAddSheet(url || '', { autoSubmit: !!url });
+      return;
     }
+    let settled = false;
+    const done = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      removeEventListener('message', onMessage);
+      const link = extractUrl(payload?.url || '') || url;
+      openAddSheet(link || '', { autoSubmit: !!link, html: payload?.html });
+    };
+    const onMessage = (e) => {
+      // The opener is an arbitrary store page, so its origin cannot be pinned. The nonce is the
+      // check that matters: it was minted by the bookmarklet for this tab and never leaves the
+      // pair, so only the window that opened us can answer.
+      if (e.source === window.opener && e.data?.type === 'wishlist:page' && e.data.nonce === nonce) done(e.data);
+    };
+    addEventListener('message', onMessage);
+    // A plain link, a stale bookmarklet or a blocked handshake must not leave the sheet hanging.
+    const timer = setTimeout(() => done(null), 3000);
+    window.opener.postMessage({ type: 'wishlist:capture', nonce }, '*');
   }, []);
 
   // Paste a product link anywhere to add it.
