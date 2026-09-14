@@ -164,8 +164,8 @@ export async function reorderLists(ids) {
 
 const replaceItem = (item) => setState((s) => ({ items: s.items.map((i) => (i.id === item.id ? item : i)) }));
 
-export async function addItem({ url, listId, allowDuplicate }) {
-  const res = await api('/items', { method: 'POST', body: { url, listId, allowDuplicate } });
+export async function addItem({ url, listId, allowDuplicate, html }) {
+  const res = await api('/items', { method: 'POST', body: { url, listId, allowDuplicate, html } });
   if (!res.duplicate) setState((s) => ({ items: [res.item, ...s.items.filter((i) => i.id !== res.item.id)] }));
   return res;
 }
