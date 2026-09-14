@@ -611,10 +611,15 @@ function fromPriceClasses($, domain) {
 
 const BLOCKED = /robot check|access denied|attention required|just a moment|are you a (human|robot)|captcha|pardon our interruption|request unsuccessful|verify you are human|403 forbidden|page not found|bot detection/i;
 
-function looksBlocked($, status) {
+function looksBlocked($, status, domain = '') {
   const title = clean($('title').first().text()) || '';
-  return status === 403 || status === 429 || status === 503 || BLOCKED.test(title) ||
-    $('form[action*="validateCaptcha"]').length > 0;
+  if (status === 403 || status === 429 || status === 503) return true;
+  if (BLOCKED.test(title) || $('form[action*="validateCaptcha"]').length > 0) return true;
+  // Some protections answer 200 with an interstitial whose title is just the bare host
+  // (Fnac serves "fnac.com" this way, both to a plain fetch and to headless Chrome). A real
+  // product page never titles itself with nothing but its own hostname, and without this the
+  // interstitial reads as a product page that merely happens to have no price.
+  return Boolean(domain) && title.toLowerCase() === domain.toLowerCase();
 }
 
 function merge(target, ...sources) {
@@ -630,7 +635,7 @@ function merge(target, ...sources) {
 export function parseHtml(html, pageUrl, status = 200) {
   const $ = cheerio.load(html);
   const domain = new URL(pageUrl).hostname.replace(/^www\d?\./, '');
-  const blocked = looksBlocked($, status);
+  const blocked = looksBlocked($, status, domain);
   const ld = jsonLd($);
   const data = { domain, categories: [] };
   merge(data, fromAmazon($, domain), fromJsonLd(ld));
@@ -800,7 +805,11 @@ export async function scrapeProduct(rawUrl, { html } = {}) {
           if (data.blocked) for (const k of ['title', 'image', 'price', 'currency']) data[k] = null;
           merge(data, parsed);
           data.blocked = false;
-          errors.length = 0;
+          // Only drop the earlier errors if the render actually recovered something. A store
+          // that blocks the plain fetch usually blocks the browser too, and clearing the
+          // errors unconditionally replaced "<store> blocked the request" with the far more
+          // misleading "Couldn't find the price or image".
+          if (parsed.price != null || parsed.image) errors.length = 0;
         }
       }
     } catch (err) {
