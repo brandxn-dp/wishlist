@@ -55,7 +55,8 @@ It's all one container:
 
 - **Built-in Chromium.** Some stores (B&H, Etsy, Walmart…) block simple requests or build their pages with JavaScript. Wishlist then opens the page in a headless Chromium inside the container. Chromium only starts when a link needs it and shuts down after 90 seconds idle, so it costs no memory the rest of the time. Set `BROWSER=off` to disable it.
 - **Best Buy** blocks automated visits to product pages outright, even from real browsers. Wishlist reads Best Buy's own price API instead, which is faster and more reliable.
-- **Anything else stubborn** (e.g. Target): use the iPhone Shortcut with the *Run JavaScript on Web Page* step. Your phone sends the page it already loaded. You can also fill in the price by hand; Wishlist tells you when something is missing.
+- **Home Depot** answers every server request with an error page, browser or not. Wishlist keeps the name from the link and tells you the price is missing; send the page from your phone to fill in the rest.
+- **Anything else stubborn** (e.g. Target, Home Depot): use the iPhone Shortcut with the *Run JavaScript on Web Page* step. Your phone sends the page it already loaded. You can also fill in the price by hand; Wishlist tells you when something is missing.
 
 ### Updating
 

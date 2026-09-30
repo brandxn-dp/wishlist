@@ -265,9 +265,10 @@ async function renderWithBrowser(url) {
           req.abort().catch(() => {});
         } else req.continue().catch(() => {});
       });
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       await page.waitForNetworkIdle({ idleTime: 800, timeout: 8000 }).catch(() => {});
-      return { html: await page.content(), url: page.url() };
+      // Keep the status: a store that answers 403 with a styled "Oops" page still looks like a page.
+      return { html: await page.content(), url: page.url(), status: res?.status() ?? 200 };
   });
 }
 
@@ -445,7 +446,7 @@ function jsonLd($) {
       visit(JSON.parse(raw));
     } catch {
       try {
-        visit(JSON.parse(raw.replace(/[ -]+/g, ' ')));
+        visit(JSON.parse(raw.replace(/[\x00-\x1f]+/g, ' ')));
       } catch {
         /* ignore malformed blocks */
       }
@@ -609,7 +610,7 @@ function fromPriceClasses($, domain) {
   return found || {};
 }
 
-const BLOCKED = /robot check|access denied|attention required|just a moment|are you a (human|robot)|captcha|pardon our interruption|request unsuccessful|verify you are human|403 forbidden|page not found|bot detection/i;
+const BLOCKED = /robot check|access denied|attention required|just a moment|are you a (human|robot)|captcha|pardon our interruption|request unsuccessful|verify you are human|403 forbidden|page not found|bot detection|^error page$|^oops|something went wrong/i;
 
 function looksBlocked($, status) {
   const title = clean($('title').first().text()) || '';
@@ -794,8 +795,9 @@ export async function scrapeProduct(rawUrl, { html } = {}) {
     try {
       const rendered = await renderWithBrowser(url);
       if (rendered) {
-        const parsed = parseHtml(rendered.html, rendered.url);
-        if (!parsed.blocked) {
+        const parsed = parseHtml(rendered.html, rendered.url, rendered.status);
+        // A challenge page can answer 200 with nothing on it; don't let that erase a real error.
+        if (!parsed.blocked && (parsed.title || parsed.price != null || parsed.image)) {
           // Rendered data is more trustworthy than a bot-blocked static fetch.
           if (data.blocked) for (const k of ['title', 'image', 'price', 'currency']) data[k] = null;
           merge(data, parsed);
