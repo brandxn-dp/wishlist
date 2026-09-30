@@ -725,7 +725,7 @@ function tidyTitle(title, siteName, domain) {
   return title.replace(/^Amazon\.[\w.]+\s*:\s*/i, '').trim();
 }
 
-const TRACKING = /^(utm_\w+|fbclid|gclid|gbraid|wbraid|msclkid|mc_[ce]id|_ga|ref|ref_|psc|pd_rd_\w+|pf_rd_\w+|content-id|smid|th|linkCode|tag|ascsubtag|srsltid|irclickid|clickid|affiliate\w*)$/i;
+const TRACKING = /^(utm_\w+|fbclid|gclid|gbraid|wbraid|msclkid|dclid|ttclid|twclid|epik|igshid|mc_[ce]id|_ga|ref|ref_|psc|pd_rd_\w+|pf_rd_\w+|content-id|smid|th|linkCode|tag|ascsubtag|srsltid|irclickid|clickid|irgwc|afsrc|cm_(mmc|sp|re)|mkwid|pcrid|source|fp|affiliate\w*)$/i;
 
 export function cleanUrl(raw) {
   let u;
