@@ -357,7 +357,10 @@ function IntegrationsScreen() {
   const [tokens, setTokens] = useState(null);
   const bookmark = useRef(null);
   const origin = location.origin;
-  const bookmarklet = `javascript:(function(){window.open('${origin}/add?url='+encodeURIComponent(location.href),'_blank')})()`;
+  // Carries the page's own product data (title, meta tags, JSON-LD) in the URL fragment, which
+  // never reaches the server, so stores that refuse servers still get read. Home Depot's /pep/ ad
+  // pages hold no product data, so the real /p/ page is fetched from here, in your own browser.
+  const bookmarklet = `javascript:(function(){var o=${JSON.stringify(origin)};function g(d){var p=['<title>'+(d.title||'').replace(/</g,'&lt;')+'</title>'],n=0;[].forEach.call(d.querySelectorAll('meta'),function(m){p.push(m.outerHTML)});[].forEach.call(d.querySelectorAll('script[type=\"application/ld+json\"]'),function(s){var l=s.textContent.length;if(l<120000&&n+l<240000){n+=l;p.push(s.outerHTML)}});return '<!doctype html><html><head>'+p.join('')+'</head><body></body></html>'}function go(u,h){var a=o+'/add#u='+encodeURIComponent(u)+'&h='+encodeURIComponent(h),w=window.open(a,'_blank');if(!w)location.href=a}var u=location.href,a=u.replace('/pep/','/p/'),h=g(document);if(a!==u&&h.indexOf('\"Product\"')<0){fetch(a,{credentials:'include'}).then(function(r){return r.text()}).then(function(t){go(a,g(new DOMParser().parseFromString(t,'text/html')))}).catch(function(){go(u,h)})}else{go(u,h)}})()`;
 
   const load = () => api('/tokens').then((r) => setTokens(r.tokens)).catch(fail);
   useEffect(() => {
@@ -435,7 +438,7 @@ function IntegrationsScreen() {
           <div className="code" onClick={() => copy(`${origin}/api/items`, 'Address copied')}>{origin}/api/items</div>
         </Group>
 
-        <Group header="Computer Bookmarklet" footer="Drag the button to your bookmarks bar. Click it on any product page to add it.">
+        <Group header="Computer Bookmarklet" footer="Drag the button to your bookmarks bar, then click it on any product page. It sends the page your browser already loaded, so stores that block servers (Home Depot, Target…) still get their price and photo.">
           <div style={{ padding: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <a ref={bookmark} className="btn small" onClick={(e) => e.preventDefault()} title="Drag me to your bookmarks bar">
               <Icon name="plus" size={18} /> Add to Wishlist

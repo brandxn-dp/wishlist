@@ -13,11 +13,11 @@ import { refreshPrice, confirmDeleteItem } from './ListDetail.jsx';
 
 /* ═════════════════════════ Add item ═════════════════════════ */
 
-export function openAddSheet(url = '', { listId, autoSubmit = false } = {}) {
-  return presentSheet(({ close }) => <AddItemSheet initialUrl={url} listId={listId} autoSubmit={autoSubmit} close={close} />, { size: 'auto' });
+export function openAddSheet(url = '', { listId, autoSubmit = false, html } = {}) {
+  return presentSheet(({ close }) => <AddItemSheet initialUrl={url} listId={listId} autoSubmit={autoSubmit} html={html} close={close} />, { size: 'auto' });
 }
 
-function AddItemSheet({ initialUrl, listId, autoSubmit, close }) {
+function AddItemSheet({ initialUrl, listId, autoSubmit, html, close }) {
   const lists = useStore((s) => s.lists);
   const dark = useDark();
   const [url, setUrl] = useState(initialUrl);
@@ -32,7 +32,8 @@ function AddItemSheet({ initialUrl, listId, autoSubmit, close }) {
     setBusy(true);
     setError('');
     try {
-      const res = await addItem({ url: link, listId: target, allowDuplicate });
+      // The captured page belongs to the link it came from; drop it if the link was edited.
+      const res = await addItem({ url: link, listId: target, allowDuplicate, html: link === initialUrl ? html : undefined });
       if (res.duplicate) {
         setBusy(false);
         const again = await confirmAlert({

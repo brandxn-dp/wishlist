@@ -738,6 +738,8 @@ export function cleanUrl(raw) {
   // Amazon: reduce to the canonical /dp/ASIN form.
   const asin = /(?:\/dp\/|\/gp\/product\/|\/gp\/aw\/d\/)([A-Z0-9]{10})/i.exec(u.pathname)?.[1];
   if (/^amazon\./.test(host) && asin) return `${u.origin}/dp/${asin.toUpperCase()}`;
+  // Home Depot's /pep/ landing pages (from shopping ads) carry no product data; /p/ is the real page.
+  if (host === 'homedepot.com') u.pathname = u.pathname.replace(/^\/pep\//, '/p/');
   for (const key of [...u.searchParams.keys()]) if (TRACKING.test(key)) u.searchParams.delete(key);
   u.hash = '';
   return u.href;

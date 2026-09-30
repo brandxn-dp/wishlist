@@ -78,9 +78,11 @@ function Shell() {
   useEffect(() => {
     if (location.pathname === '/share' || location.pathname === '/add') {
       const p = new URLSearchParams(location.search);
-      const url = extractUrl([p.get('url'), p.get('text'), p.get('title')].filter(Boolean).join(' '));
+      // The bookmarklet carries the page it captured in the fragment, which never leaves the browser.
+      const frag = new URLSearchParams(location.hash.slice(1));
+      const url = extractUrl([frag.get('u'), p.get('url'), p.get('text'), p.get('title')].filter(Boolean).join(' '));
       history.replaceState(null, '', '/');
-      openAddSheet(url || '', { autoSubmit: !!url });
+      openAddSheet(url || '', { autoSubmit: !!url, html: frag.get('h') || undefined });
     }
   }, []);
 
